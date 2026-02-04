@@ -1,136 +1,192 @@
-# Daily ML Practice — Bank Marketing Classification and Threshold Optimization
+```markdown
+# Bank Marketing Term Deposit Prediction — End-to-End ML Project
 
-## Overview
+This project builds an end-to-end machine learning pipeline to predict whether a bank customer will subscribe to a term deposit based on marketing campaign data.  
+The goal is to support smarter call targeting and improve campaign efficiency using probability-based ranking and threshold optimization.
 
-This study is a daily machine learning practice project built after completing a 30-day data scientist challenge, with the goal of maintaining modeling, evaluation, and business interpretation skills through continuous hands-on work.
+The project includes full preprocessing, model comparison, threshold strategy, cost-sensitive decision analysis, and leakage-aware scenario design.
 
-The project focuses on predicting whether a bank customer will subscribe to a term deposit based on marketing campaign and customer profile features. Multiple classification models are trained and compared, and the decision threshold is optimized using both metric-based and cost-aware approaches.
+---
+
+## Problem Definition
+
+Banks run outbound call campaigns to sell term deposits. Contacting every customer is costly and inefficient.  
+We aim to build a model that estimates **subscription probability** and supports:
+
+- better lead prioritization
+- threshold-based outreach decisions
+- cost-aware campaign strategy
+
+Target variable:  
+`y = 1` → customer subscribes  
+`y = 0` → customer does not subscribe
+
+---
 
 ## Dataset
 
-Dataset: Bank Marketing (UCI Bank Marketing dataset variant)
+Source: UCI Bank Marketing Dataset (bank-additional-full)
 
-- Rows: 41,188  
-- Features: 20 input features + 1 target  
-- Target: `y` (yes/no → converted to binary)  
-- Class distribution: ~11% positive, ~89% negative (imbalanced)  
-- Missing values: None detected
+- Rows: 41,188
+- Features: 20 predictors + target
+- Mixed numeric and categorical variables
+- Missing values: none
+- Class distribution:
+  - Positive ≈ 11.3%
+  - Negative ≈ 88.7%
+- Strong class imbalance → PR-AUC and threshold tuning are emphasized.
 
-Important operational note:  
-The feature `duration` (call duration) may only be known after a call is completed. If the deployment scenario is pre-call targeting, the model should be retrained without this feature to avoid data leakage.
+---
 
-## Objective
+## Leakage-Aware Modeling Design
 
-Build and evaluate classification models that can:
+One feature — **call duration** — is only known after the call is completed.  
+Using it for pre-call targeting would create data leakage.
 
-- Rank customers by likelihood of subscription
-- Support campaign targeting decisions
-- Optimize decision threshold based on business priorities
-- Translate model outputs into operational recommendations
+Therefore, two separate scenarios are modeled:
 
-## Workflow
+### Scenario A — Post-Call Prediction (with duration)
+Use case: predict conversion after call features are known.
 
-1. Data loading and validation
-2. Target encoding (yes/no → 1/0)
-3. Exploratory checks and class balance analysis
-4. Train/validation split with stratification
-5. Preprocessing pipeline
-   - Numeric: median imputation + standard scaling
-   - Categorical: most frequent imputation + one-hot encoding
-6. Model training and comparison
-7. Probability-based evaluation (ROC-AUC, PR-AUC)
-8. Threshold analysis
-   - Metric-based (F1)
-   - Cost-aware threshold selection
-9. Final evaluation and business interpretation
+### Scenario B — Pre-Call Targeting (no duration)
+Use case: decide **who to call** before dialing.  
+This scenario is deployment-realistic and leakage-free.
+
+Both scenarios are trained and evaluated separately.
+
+---
+
+## Preprocessing Pipeline
+
+Implemented using sklearn Pipeline + ColumnTransformer:
+
+- Numeric features → StandardScaler
+- Categorical features → OneHotEncoder(handle_unknown="ignore")
+- Full preprocessing is inside the model pipeline (no manual leakage)
+
+Train/validation split:
+
+- test_size = 0.20
+- stratified by target
+- fixed random_state for reproducibility
+
+---
 
 ## Models Compared
 
-- Logistic Regression (class-balanced)
-- Random Forest
+Three classifiers are trained and evaluated under identical pipelines:
+
+- Logistic Regression (class_weight=balanced)
+- Random Forest (balanced_subsample)
 - XGBoost
 
 Evaluation metrics:
 
 - ROC-AUC
-- PR-AUC
-- Precision / Recall / F1 at different thresholds
+- PR-AUC (primary due to class imbalance)
 
-Best validation performance:
+---
 
-- Best model: XGBoost
-- ROC-AUC ≈ 0.95
-- PR-AUC ≈ 0.69
+## Model Performance
 
-## Threshold Optimization
+### Scenario A — Post-Call (with duration)
 
-Because the dataset is imbalanced, the default 0.50 threshold is not optimal.
+| Model | ROC-AUC | PR-AUC |
+|--------|---------|---------|
+| XGBoost | **0.9544** | **0.6907** |
+| Random Forest | 0.9490 | 0.6779 |
+| Logistic Regression | 0.9438 | 0.6222 |
 
-Two operating thresholds were analyzed:
+Best model: **XGBoost**
 
-### Metric-Balanced Threshold (Best F1)
+---
 
-- Threshold ≈ 0.35
-- Higher precision–recall balance
-- Lower outreach volume
-- Suitable when call capacity is limited
+### Scenario B — Pre-Call (no duration)
+
+| Model | ROC-AUC | PR-AUC |
+|--------|---------|---------|
+| XGBoost | **0.8078** | **0.4837** |
+| Logistic Regression | 0.8009 | 0.4600 |
+| Random Forest | 0.7846 | 0.4313 |
+
+Best model: **XGBoost**
+
+Performance drops as expected when removing the leakage feature — this confirms correct scenario separation.
+
+---
+
+## Threshold Strategy
+
+Default threshold (0.50) is not optimal under class imbalance.  
+Thresholds are evaluated across a grid using:
+
+- Precision
+- Recall
+- F1
+- Positive prediction rate
+- Expected business cost
+
+Two operating points are selected:
+
+### Best F1 Threshold
+Balanced precision/recall tradeoff.
 
 ### Cost-Aware Threshold
+Uses cost assumptions:
 
-Using an example cost model:
+- False Positive cost = 1
+- False Negative cost = 6  
+(missing a real subscriber is more expensive than an extra call)
 
-- False Positive cost = 1 (unnecessary call)
-- False Negative cost = 6 (missed potential subscriber)
+Example — Pre-Call scenario:
 
-Result:
+| Strategy | Threshold | Precision | Recall | F1 |
+|------------|------------|------------|------------|------|
+F1-optimal | 0.25 | 0.512 | 0.555 | 0.533 |
+Cost-optimal | 0.15 | 0.438 | 0.625 | 0.515 |
 
-- Threshold ≈ 0.15
-- Much higher recall
-- More customers contacted
-- Suitable when missing a subscriber is more expensive than making extra calls
+---
 
-## Business Interpretation
+## Feature Importance (Pre-Call XGBoost)
 
-The model can be used as a campaign scoring tool:
+Top drivers include:
 
-- Score all customers
-- Rank by predicted probability
-- Select threshold based on operational capacity and ROI targets
+- nr.employed
+- poutcome_success
+- month_oct
+- emp.var.rate
+- pdays
+- cons.conf.idx
+- contact type
+- euribor3m
 
-If campaign capacity is constrained:
-- Use higher threshold (precision-oriented)
+These variables strongly influence subscription probability and can guide campaign strategy.
 
-If revenue capture is prioritized:
-- Use lower threshold (recall-oriented)
+---
 
-Threshold should be reviewed together with business stakeholders using real call cost and conversion revenue figures.
+## Saved Artifacts
 
-## Reproducibility
+Trained pipelines are saved for reuse:
 
-Main steps are implemented in a single end-to-end notebook:
+```
 
-- Data loading
-- Pipeline preprocessing
-- Model comparison
-- Threshold table generation
-- Cost-based threshold evaluation
-- Final confusion matrix and classification report
+models/model_post_call_with_duration.joblib
+models/model_pre_call_no_duration.joblib
 
-Random seeds are fixed where applicable.
+```
 
-## Next Improvements
+Each artifact includes preprocessing + model in a single pipeline.
 
-- Retrain without post-outcome features such as call duration for pre-call deployment scenarios
-- Add probability calibration
-- Perform cross-validation
-- Add cost curves and lift charts
-- Convert notebook into modular training and evaluation scripts
+---
 
-## Purpose of This Project
+## Key Business Takeaways
 
-This project is part of a continuous daily ML practice routine designed to:
+- Probability ranking is more useful than raw class prediction.
+- Threshold selection must reflect campaign capacity and cost structure.
+- Duration creates leakage for pre-call targeting and must be excluded.
+- XGBoost consistently performs best across both realistic and post-call scenarios.
+- Cost-aware thresholds significantly change outreach volume vs capture rate.
 
-- Maintain modeling fluency
-- Practice threshold and cost-based decision logic
-- Strengthen business-oriented ML interpretation
-- Produce recruiter-reviewable, reproducible ML work samples
+---
+
+```
